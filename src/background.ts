@@ -301,7 +301,19 @@ async function acceptCommand (command: string) {
                 { args: ["<C-w>"], funcName: ["sendKey"] },
         );
         if (getGlobalConf()["<C-w>"] === "default") {
-            p = p.catch(() => browser.tabs.remove(tab.id));
+            p = p.catch(async () => {
+                const currentWindow = await browser.windows.get(tab.windowId);
+                if (currentWindow.type !== "normal") {
+                    browser.tabs.remove(tab.id);
+                    return;
+                }
+
+                const foundTabs = await browser.tabs.query({ windowId: tab.windowId })
+                if (foundTabs.length <= 1) {
+                    browser.tabs.create({ windowId: tab.windowId });
+                }
+                browser.tabs.remove(tab.id);
+            });
         }
         break;
         case "send_CS-n":
