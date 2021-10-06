@@ -1,17 +1,23 @@
-import { page } from "./page/proxy";
+import { PageType } from "./page"
 import * as CanvasRenderer from "./renderer";
 import { Stdin } from "./Stdin";
 import { Stdout } from "./Stdout";
 
 export async function neovim(
+        page: PageType,
         canvas: HTMLCanvasElement,
-        { port, password }: { port: number, password: number },
+        { port, password }: { port: number, password: string },
     ) {
     const functions: any = {};
     const requests = new Map<number, { resolve: any, reject: any }>();
 
-    CanvasRenderer.setFunctions(functions);
     CanvasRenderer.setCanvas(canvas);
+    CanvasRenderer.events.on("resize", ({grid, width, height}: any) => {
+        (functions as any).ui_try_resize_grid(grid, width, height);
+    });
+    CanvasRenderer.events.on("frameResize", ({width, height}: any) => {
+        page.resizeEditor(width, height);
+    });
 
     let prevNotificationPromise = Promise.resolve();
     const socket = new WebSocket(`ws://127.0.0.1:${port}/${password}`);
@@ -33,10 +39,10 @@ export async function neovim(
             stdin.write(reqId, api, args);
         });
     };
-    stdout.addListener("request", (_id: any, _name: any, _args: any) => {
-        return undefined;
+    stdout.on("request", (id: number, name: any, args: any) => {
+        console.warn("firenvim: unhandled request from neovim", id, name, args);
     });
-    stdout.addListener("response", (id: any, error: any, result: any) => {
+    stdout.on("response", (id: any, error: any, result: any) => {
         const r = requests.get(id);
         if (!r) {
             // This can't happen and yet it sometimes does, possibly due to a firefox bug
@@ -52,7 +58,7 @@ export async function neovim(
     });
 
     let lastLostFocus = performance.now();
-    stdout.addListener("notification", async (name: string, args: any[]) => {
+    stdout.on("notification", async (name: string, args: any[]) => {
         if (name === "redraw" && args) {
             CanvasRenderer.onRedraw(args);
             return;
@@ -102,6 +108,11 @@ export async function neovim(
                 case "firenvim_vimleave":
                     lastLostFocus = performance.now();
                     return page.killEditor();
+                case "firenvim_thunderbird_send":
+                    return browser.runtime.sendMessage({
+                        args: [],
+                        funcName: ["thunderbirdSend"],
+                    });
             }
         });
     });

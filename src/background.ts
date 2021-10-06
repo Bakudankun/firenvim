@@ -207,6 +207,7 @@ function applySettings(settings: any) {
         // "takeover": "always" | "once" | "empty" | "nonempty" | "never"
         // #265: On "once", don't automatically bring back after :q'ing it
         takeover: "always",
+        filename: "{hostname%32}_{pathname%32}_{selector%32}_{timestamp%32}.{extension}",
     });
     makeDefaultLocalSetting(settings, "about:blank\\?compose", {
         cmdline: "firenvim",
@@ -215,6 +216,7 @@ function applySettings(settings: any) {
         renderer: "canvas",
         selector: 'body',
         takeover: "always",
+        filename: "mail_{timestamp%32}.eml",
     });
     return browser.storage.local.set(settings);
 }
@@ -366,6 +368,7 @@ Object.assign(window, {
     },
     getNvimPluginVersion: () => nvimPluginVersion,
     getOwnFrameId: (sender: any) => sender.frameId,
+    getOwnComposeDetails: (sender: any) => (browser as any).compose.getComposeDetails(sender.tab.id),
     getTab: (sender: any) => sender.tab,
     getTabValue: (sender: any, args: any) => getTabValue(sender.tab.id, args[0]),
     getTabValueFor: (_: any, args: any) => getTabValue(args[0], args[1]),
@@ -383,6 +386,9 @@ Object.assign(window, {
         return sender.frameId;
     },
     setTabValue: (sender: any, args: any) => setTabValue(sender.tab.id, args[0], args[1]),
+    thunderbirdSend: (sender: any) => {
+        return (browser as any).compose.sendMessage(sender.tab.id, { mode: 'default' });
+    },
     toggleDisabled: () => toggleDisabled(),
     updateSettings: () => updateSettings(),
 } as any);
@@ -414,6 +420,10 @@ updateIcon();
 /* istanbul ignore next */
 if (!isThunderbird()) {
     browser.commands.onCommand.addListener(acceptCommand);
+    browser.runtime.onMessageExternal.addListener(async (request: any, sender: any, _sendResponse: any) => {
+        const resp = await acceptCommand(request.command);
+        _sendResponse(resp);
+    });
 }
 
 async function updateIfPossible() {
@@ -443,6 +453,63 @@ browser.runtime.onUpdateAvailable.addListener(updateIfPossible);
 // Can't test on the bird of thunder
 /* istanbul ignore next */
 if (isThunderbird()) {
+    (browser as any).compose.onBeforeSend.addListener(async (tab: any, details: any) => {
+        const lines = (await browser.tabs.sendMessage(tab.id, { args: [], funcName: ["get_buf_content"] })) as string[];
+        // No need to remove the canvas when working with plaintext,
+        // thunderbird will do that for us.
+        if (details.isPlainText) {
+            // Firenvim has to cancel the beforeinput event on the compose
+            // window's documentElement in order to prevent the canvas from
+            // being destroyed. However, thunderbird has a bug where cancelling
+            // this event will prevent onBeforeSend from setting the compose
+            // window's content when editing plaintext emails.
+            // We work around this by telling the compose script to temporarily
+            // stop cancelling events.
+            await browser.tabs.sendMessage(tab.id, { args: [], funcName: ["pause_keyhandler"] });
+            return { cancel: false, details: { plainTextBody: lines.join("\n") } };
+        }
+
+        const doc = document.createElement("html");
+        const bod = document.createElement("body");
+        doc.appendChild(bod);
+
+        // Turn `>` into appropriate blockquote elements.
+        let previousQuoteLevel = 0;
+        let parent : HTMLElement = bod;
+        for (const l of lines) {
+            let currentQuoteLevel = 0;
+
+            // Count number of ">" symbols
+            let i = 0;
+            while (l[i] === " " || l[i] === ">") {
+                if (l[i] === ">") {
+                    currentQuoteLevel += 1;
+                }
+                i += 1;
+            }
+
+            const line = l.slice(i);
+
+            if (currentQuoteLevel > previousQuoteLevel) {
+                for (let i = previousQuoteLevel; i < currentQuoteLevel; ++i) {
+                    const block = document.createElement("blockquote");
+                    block.setAttribute("type", "cite");
+                    parent.appendChild(block);
+                    parent = block;
+                }
+            } else if (currentQuoteLevel < previousQuoteLevel) {
+                for (let i = previousQuoteLevel; i > currentQuoteLevel; --i) {
+                    parent = parent.parentElement;
+                }
+            }
+
+            parent.appendChild(document.createTextNode(line));
+            parent.appendChild(document.createElement("br"));
+
+            previousQuoteLevel = currentQuoteLevel;
+        }
+        return { cancel: false, details: { body: doc.outerHTML } };
+    });
     // In thunderbird, register the script to be loaded in the compose window
     (browser as any).composeScripts.register({
         js: [{file: "compose.js"}],

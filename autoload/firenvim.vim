@@ -57,6 +57,11 @@ function! firenvim#press_keys(...) abort
         call rpcnotify(firenvim#get_chan(), 'firenvim_press_keys', l:keys)
 endfunction
 
+" Asks the browser extension to hide the firenvim frame
+function! firenvim#thunderbird_send() abort
+        call rpcnotify(firenvim#get_chan(), 'firenvim_thunderbird_send', { 'text': nvim_buf_get_lines(0, 0, -1, 0) })
+endfunction
+
 " Turns a wsl path (forward slashes) into a windows one (backslashes)
 function! s:to_windows_path(path) abort
         if a:path[0] !=# '/'
@@ -518,8 +523,14 @@ function! s:get_executable_content(data_dir, prolog) abort
                                 \ 'mkdir -p ' . a:data_dir . "\n" .
                                 \ 'chmod 700 ' . a:data_dir . "\n" .
                                 \ 'cd ' . a:data_dir . "\n" .
-                                \ "unset NVIM_LISTEN_ADDRESS\n" .
                                 \ 'export PATH="$PATH:' . $PATH . "\"\n" .
+                                \ "unset NVIM_LISTEN_ADDRESS\n" .
+                                \ 'if [ -n "$VIM" ] && [ ! -d "$VIM" ]; then' . "\n" .
+                                \ "  unset VIM\n" .
+                                \ "fi\n" .
+                                \ 'if [ -n "$VIMRUNTIME" ] && [ ! -d "$VIMRUNTIME" ]; then' . "\n" .
+                                \ "  unset VIMRUNTIME\n" .
+                                \ "fi\n" .
                                 \ a:prolog . "\n" .
                                 \ "exec '" . s:get_progpath() . "' --headless --cmd 'let g:started_by_firenvim = v:true' -c 'call firenvim#run()'\n"
 endfunction
