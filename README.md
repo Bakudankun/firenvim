@@ -99,17 +99,8 @@ endif
 Alternatively, you can detect when Firenvim connects to Neovim by using the `UIEnter` autocmd event:
 
 ```vim
-function! s:IsFirenvimActive(event) abort
-  if !exists('*nvim_get_chan_info')
-    return 0
-  endif
-  let l:ui = nvim_get_chan_info(a:event.chan)
-  return has_key(l:ui, 'client') && has_key(l:ui.client, 'name') &&
-      \ l:ui.client.name =~? 'Firenvim'
-endfunction
-
 function! OnUIEnter(event) abort
-  if s:IsFirenvimActive(a:event)
+  if 'Firenvim' ==# get(get(nvim_get_chan_info(a:event.chan), 'client', {}), 'name', '')
     set laststatus=0
   endif
 endfunction
@@ -128,7 +119,7 @@ au BufEnter github.com_*.txt set filetype=markdown
 
 ### Understanding Firenvim's configuration object
 
-You can configure everything else about Firenvim by creating a dictionnary named `g:firenvim_config` in your init.vim and setting the keys "globalSettings" and "localSettings". In the dictionary `g:firenvim_config["localSettings"]` you can map Javascript patterns that match against the full URL to settings that are used for all URLs matched by that pattern. When multiple patterns match a URL, the pattern with the highest "priority" value is used. Here is an example (the settings and their possible values will be explained in the next subsections):
+You can configure everything else about Firenvim by creating a dictionary named `g:firenvim_config` in your init.vim and setting the keys "globalSettings" and "localSettings". In the dictionary `g:firenvim_config["localSettings"]` you can map Javascript patterns that match against the full URL to settings that are used for all URLs matched by that pattern. When multiple patterns match a URL, the pattern with the highest "priority" value is used. Here is an example (the settings and their possible values will be explained in the next subsections):
 
 ```vim
 let g:firenvim_config = { 
@@ -306,7 +297,7 @@ let g:firenvim_config = {
 
 ### Configuring the filename
 
-It is possible to configure the name of the file used by Firenvim with the `filename` localSetting. This setting is a format string where each element in curly braces will be replaced with a value and where the maxium length can be specified with a percentage. Possible format elements are `hostname` (= the domain name of the website), `pathname` (= the path of the page), `selector` (= the CSS selector of the text area), `timestamp` (= the current date) and `extension` (the language extension when using Firenvim on a code editor or `txt` otherwise). For example:
+It is possible to configure the name of the file used by Firenvim with the `filename` localSetting. This setting is a format string where each element in curly braces will be replaced with a value and where the maximum length can be specified with a percentage. Possible format elements are `hostname` (= the domain name of the website), `pathname` (= the path of the page), `selector` (= the CSS selector of the text area), `timestamp` (= the current date) and `extension` (the language extension when using Firenvim on a code editor or `txt` otherwise). For example:
 
 ```vim
 let g:firenvim_config = {

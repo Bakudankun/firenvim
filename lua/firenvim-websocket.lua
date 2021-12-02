@@ -43,7 +43,7 @@ end
 
 -- The server's opening handshake is described here: https://tools.ietf.org/html/rfc6455#section-4.2.2
 local function accept_connection(headers)
-        return "HTTP/1.1 101 Swithing Protocols\n" ..
+        return "HTTP/1.1 101 Switching Protocols\n" ..
         "Connection: Upgrade\r\n" ..
         "Sec-WebSocket-Accept: " .. compute_key(headers["Sec-WebSocket-Key"]) .. "\r\n" ..
         "Upgrade: websocket\r\n" ..
@@ -137,6 +137,14 @@ local function encode_frame(data)
         return  header .. len .. data
 end
 
+local function pong_frame(decoded_frame)
+        -- 137: 10001010
+        -- Fin: 1
+        -- RSV{1,2,3}: 0
+        -- Opcode: 0xA (pong)
+        return string.char(138) .. decoded_frame.payload_length .. decoded_frame.payload_data
+end
+
 local function close_frame()
         local frame = encode_frame("")
         return string.char(136) .. string.sub(frame, 2)
@@ -149,4 +157,5 @@ return {
         encode_frame = encode_frame,
         opcodes = opcodes,
         parse_headers = parse_headers,
+        pong_frame = pong_frame,
 }
