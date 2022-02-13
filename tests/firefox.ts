@@ -14,7 +14,7 @@ import {
  killDriver,
  reloadNeovim,
  testAce,
- testBrowserShortcuts,
+ // testBrowserShortcuts,
  testFrameBrowserShortcuts,
  testCodemirror,
  testContentEditable,
@@ -24,6 +24,8 @@ import {
  testEvalJs,
  testFilenameSettings,
  testFocusGainedLost,
+ testFocusNextPrev1,
+ testFocusNextPrev2,
  testForceNvimify,
  testGithubAutofill,
  testGStartedByFirenvim,
@@ -139,6 +141,8 @@ describe("Firefox", () => {
         t("Force nvimify", testForceNvimify);
         t("Input focused after frame", testInputFocusedAfterLeave);
         t("FocusInput", testFocusInput);
+        t("FocusNextPrev1", testFocusNextPrev1);
+        t("FocusNextPrev2", testFocusNextPrev2);
         t("Dynamically created elements", testDynamicTextareas);
         t("Dynamically created nested elements", testNestedDynamicTextareas);
         t("Large buffers", testLargeBuffers);
@@ -158,7 +162,7 @@ describe("Firefox", () => {
         t("Monaco editor", testMonaco);
         t("Span removed", testDisappearing);
         t("Ignoring keys", testIgnoreKeys);
-        t("Browser shortcuts", testBrowserShortcuts);
+        // t("Browser shortcuts", testBrowserShortcuts); // TODO: re-enable me
         t("Frame browser shortcuts", (...args) => neovimVersion >= 0.5
                 ? testFrameBrowserShortcuts(...args)
                 : undefined
