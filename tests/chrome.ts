@@ -50,7 +50,8 @@ import {
  testTakeoverNonEmpty,
  testTakeoverOnce,
  testToggleFirenvim,
- testVimrcFailure,
+ testBrokenVimrc,
+ testErrmsgVimrc,
  testWorksInFrame,
 } from "./_common"
 import { setupVimrc, resetVimrc } from "./_vimrc";
@@ -84,6 +85,7 @@ describe("Chrome", () => {
                 // Disabling the GPU is required on windows
                 const options = (new (require("selenium-webdriver/chrome").Options)())
                         .addArguments("--disable-gpu")
+                        .addArguments("--disable-features=ChromeWhatsNewUI")
                         .addArguments(`--load-extension=${path.join(extensionDir, "chrome")}`);
 
                 // Won't work until this wontfix is fixed:
@@ -203,7 +205,10 @@ describe("Chrome", () => {
         t("EvalJS", testEvalJs);
         t("Takeover: empty", testTakeoverEmpty);
         t("Toggling firenvim", testToggleFirenvim);
-        t("Buggy Vimrc", testVimrcFailure, 60000);
+        t("Buggy Vimrc", testBrokenVimrc, 60000);
+        if (neovimVersion > 0.7) {
+                t("Vimrc emits error messages", testErrmsgVimrc);
+        }
         if (process.platform !== "darwin") {
                 // This test somehow fails on osx+chrome, so don't run it on this combination!
                 t("Mouse", testMouse);

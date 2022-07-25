@@ -188,6 +188,10 @@ function! firenvim#run() abort
                         let l:result['settings'] = g:firenvim_config
                 endif
 
+                if exists('g:firenvim_o')
+                        let l:result['messages'] = g:firenvim_o
+                endif
+
                 if has_key(l:params, 'newInstance') && l:params['newInstance']
                         let l:port = luaeval("require('firenvim').start_server('" .
                                                 \ l:params['password'] .
@@ -197,7 +201,14 @@ function! firenvim#run() abort
 
                 call WriteStdout(a:id, json_encode(result))
         endfunction
-        let l:chanid = stdioopen({ 'on_stdin': 'OnStdin' })
+        if exists('g:firenvim_c')
+                for data in g:firenvim_i
+                        call OnStdin(g:firenvim_c, data, 'stdin')
+                endfor
+                let g:Firenvim_oi = funcref('OnStdin')
+        else
+                let l:chanid = stdioopen({ 'on_stdin': 'OnStdin' })
+        endif
 endfunction
 
 " Wrapper function that executes funcname(...args) if a $DRY_RUN env variable
@@ -279,6 +290,21 @@ function! s:get_firefox_manifest_dir_path() abort
                 return s:get_data_dir_path()
         end
         return s:build_path([$HOME, '.mozilla', 'native-messaging-hosts'])
+endfunction
+
+function! s:librewolf_config_exists() abort
+        let l:p = [$HOME, '.librewolf']
+        if has('win32') || s:is_wsl
+                let l:p = [s:get_windows_env_path('%USERPROFILE%'), '.librewolf']
+        endif
+        return isdirectory(s:build_path(l:p))
+endfunction
+
+function! s:get_librewolf_manifest_dir_path() abort
+        if has('win32') || s:is_wsl
+                return s:get_data_dir_path()
+        end
+        return s:build_path([$HOME, '.librewolf', 'native-messaging-hosts'])
 endfunction
 
 function! s:brave_config_exists() abort
@@ -504,6 +530,7 @@ function! s:get_progpath() abort
                         \ 'pattern': '^/nix/store/',
                         \ 'constant_paths': [
                                 \ expand('$HOME/.nix-profile/bin/nvim'),
+                                \ expand('/etc/profiles/per-user/$USER/bin/nvim'),
                                 \ '/run/current-system/sw/bin/nvim'
                         \ ]
                 \ }
@@ -533,7 +560,28 @@ function! s:get_progpath() abort
         return l:result
 endfunction
 
+function! s:capture_env_var(var) abort
+        let l:value = eval('$' . a:var)
+        if l:value ==? ''
+                return ''
+        endif
+        return 'if [ ! -n "$' . a:var . '" ]; then' . "\n" .
+              \'  ' . a:var . "='" . l:value . "'\n" .
+              \'  export ' . a:var . "\n" .
+              \"fi\n"
+endfunction
+
 function! s:get_executable_content(data_dir, prolog) abort
+        let l:stdioopen = ''
+        if api_info().version.major > 0 || api_info().version.minor > 6
+                let l:stdioopen = '--cmd "' .
+                                        \'let g:firenvim_i=[]|' .
+                                        \'let g:firenvim_o=[]|' .
+                                        \'let g:Firenvim_oi={i,d,e->add(g:firenvim_i,d)}|' .
+                                        \'let g:Firenvim_oo={t->add(g:firenvim_o,t)}|' .
+                                        \"let g:firenvim_c=stdioopen({'on_stdin':{i,d,e->g:Firenvim_oi(i,d,e)},'on_print':{t->g:Firenvim_oo(t)}})".
+                                        \'"'
+        endif
         if has('win32') || s:is_wsl
                 let l:wsl_prefix = ''
                 if s:is_wsl
@@ -544,7 +592,7 @@ function! s:get_executable_content(data_dir, prolog) abort
                                         \ "mkdir \"" . l:dir . "\" 2>nul\r\n" .
                                         \ "cd \"" . l:dir . "\"\r\n" .
                                         \ a:prolog . "\r\n" .
-                                        \ l:wsl_prefix . ' ' . "\"" . s:get_progpath() . "\" --headless --cmd \"let g:started_by_firenvim = v:true\" -c \"call firenvim#run()\"\r\n"
+                                        \ l:wsl_prefix . ' "' . s:get_progpath() . '" --headless ' . l:stdioopen . ' --cmd "let g:started_by_firenvim = v:true" -c "call firenvim#run()"' . "\r\n"
         endif
         return "#!/bin/sh\n" .
                                 \ 'mkdir -p ' . a:data_dir . "\n" .
@@ -558,8 +606,15 @@ function! s:get_executable_content(data_dir, prolog) abort
                                 \ 'if [ -n "$VIMRUNTIME" ] && [ ! -d "$VIMRUNTIME" ]; then' . "\n" .
                                 \ "  unset VIMRUNTIME\n" .
                                 \ "fi\n" .
+                                \ s:capture_env_var('XDG_DATA_HOME') .
+                                \ s:capture_env_var('XDG_CONFIG_HOME') .
+                                \ s:capture_env_var('XDG_STATE_HOME') .
+                                \ s:capture_env_var('XDG_DATA_DIRS') .
+                                \ s:capture_env_var('XDG_CONFIG_DIRS') .
+                                \ s:capture_env_var('XDG_CACHE_HOME') .
+                                \ s:capture_env_var('XDG_RUNTIME_DIR') .
                                 \ a:prolog . "\n" .
-                                \ "exec '" . s:get_progpath() . "' --headless --cmd 'let g:started_by_firenvim = v:true' -c 'call firenvim#run()'\n"
+                                \ "exec '" . s:get_progpath() . "' --headless " . l:stdioopen . " --cmd 'let g:started_by_firenvim = v:true' -c 'call firenvim#run()'\n"
 endfunction
 
 function! s:get_manifest_beginning(execute_nvim_path) abort
@@ -643,6 +698,12 @@ function! s:get_browser_configuration() abort
                         \ 'manifest_dir_path': function('s:get_firefox_manifest_dir_path'),
                         \ 'registry_key': 'HKCU:\Software\Mozilla\NativeMessagingHosts\firenvim',
                 \},
+                \'librewolf': {
+                        \ 'has_config': s:librewolf_config_exists(),
+                        \ 'manifest_content': function('s:get_firefox_manifest'),
+                        \ 'manifest_dir_path': function('s:get_librewolf_manifest_dir_path'),
+                        \ 'registry_key': 'HKCU:\Software\LibreWolf\NativeMessagingHosts\firenvim',
+                \},
                 \'opera': {
                         \ 'has_config': s:opera_config_exists(),
                         \ 'manifest_content': function('s:get_chrome_manifest'),
@@ -663,6 +724,7 @@ function! s:get_browser_configuration() abort
                 \}
         \}
         if $TESTING == 1
+                call remove(l:browsers, 'librewolf')
                 call remove(l:browsers, 'brave')
                 call remove(l:browsers, 'chrome-dev')
                 call remove(l:browsers, 'opera')
