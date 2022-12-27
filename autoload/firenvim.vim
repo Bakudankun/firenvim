@@ -69,11 +69,6 @@ function! firenvim#press_keys(...) abort
         call rpcnotify(firenvim#get_chan(), 'firenvim_press_keys', l:keys)
 endfunction
 
-" Asks the browser extension to hide the firenvim frame
-function! firenvim#thunderbird_send() abort
-        call rpcnotify(firenvim#get_chan(), 'firenvim_thunderbird_send', { 'text': nvim_buf_get_lines(0, 0, -1, 0) })
-endfunction
-
 " Turns a wsl path (forward slashes) into a windows one (backslashes)
 function! s:to_windows_path(path) abort
         if a:path[0] !=# '/'
@@ -415,6 +410,19 @@ function! s:get_chrome_manifest_dir_path() abort
         return s:build_path([$HOME, '.config', 'google-chrome', 'NativeMessagingHosts'])
 endfunction
 
+function! s:get_vivaldi_manifest_dir_path() abort
+        if has('mac')
+                return s:get_chrome_manifest_dir_path()
+        elseif has('win32') || s:is_wsl
+                return s:get_chrome_manifest_dir_path()
+        end
+        " https://github.com/glacambre/firenvim/issues/1433
+        if !empty($XDG_CONFIG_HOME)
+                return s:build_path([$XDG_CONFIG_HOME, 'vivaldi', 'NativeMessagingHosts'])
+        end
+        return s:build_path([$HOME, '.config', 'vivaldi', 'NativeMessagingHosts'])
+endfunction
+
 function! s:get_ungoogled_chromium_manifest_dir_path() abort
         if has('mac') || has('win32') || s:is_wsl
                 throw "Ungoogled chromium isn't supported. Please open an issue to add support."
@@ -614,7 +622,16 @@ function! s:get_executable_content(data_dir, prolog) abort
                                 \ s:capture_env_var('XDG_CACHE_HOME') .
                                 \ s:capture_env_var('XDG_RUNTIME_DIR') .
                                 \ a:prolog . "\n" .
-                                \ "exec '" . s:get_progpath() . "' --headless " . l:stdioopen . " --cmd 'let g:started_by_firenvim = v:true' -c 'call firenvim#run()'\n"
+                                \ "exec '" . s:get_progpath() .
+                                  \ "' --headless " . l:stdioopen .
+                                  \ " --cmd 'let g:started_by_firenvim = v:true' " .
+                                  \ "-c 'try|" .
+                                      \ 'call firenvim#run()|' .
+                                    \ 'catch|' .
+                                      \ "call chansend(g:firenvim_c,[\"f\\n\\n\\n\"..json_encode({\"messages\":[\"Your plugin manager did not load the Firenvim plugin for neovim.\"]+g:firenvim_o,\"version\":\"0.0.0\"})])|" .
+                                      \ "call chansend(2,[\"Firenvim not in rtp:\"..&rtp])|" .
+                                      \ 'qall!' .
+                                  \ "|endtry'\n"
 endfunction
 
 function! s:get_manifest_beginning(execute_nvim_path) abort
@@ -719,7 +736,7 @@ function! s:get_browser_configuration() abort
                 \'vivaldi': {
                         \ 'has_config': s:vivaldi_config_exists(),
                         \ 'manifest_content': function('s:get_chrome_manifest'),
-                        \ 'manifest_dir_path': function('s:get_chrome_manifest_dir_path'),
+                        \ 'manifest_dir_path': function('s:get_vivaldi_manifest_dir_path'),
                         \ 'registry_key': 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\firenvim',
                 \}
         \}
@@ -758,10 +775,16 @@ let s:is_wsl = v:false
 " a:2: A prologue that should be inserted in the shell/batch script and
 "      executed before neovim is ran.
 function! firenvim#install(...) abort
-        if !has('nvim-0.4.0')
-                echoerr 'Error: nvim version >= 0.4.0 required. Aborting.'
+        if !has('nvim-0.6.0')
+                echoerr 'Error: nvim version >= 0.6.0 required. Aborting.'
                 return
         endif
+        try
+                lua require("bit")
+        catch
+                echoerr 'Error: Lua package "bit" unavailable. Install it or switch to LuaJIT.'
+                return
+        endtry
 
         let l:force_install = 0
         let l:script_prolog = ''
