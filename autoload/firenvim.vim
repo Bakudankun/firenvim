@@ -83,6 +83,13 @@ function! s:to_wsl_path(path) abort
         if a:path[0] ==# '/'
                 return a:path
         endif
+        if executable('wslpath')
+                try
+                        " 0:-2 because we need to remove the \r\n
+                        return system(['wslpath', '-a', '-u', a:path])[0:-2]
+                catch
+                endtry
+        endif
         let l:path_components = split(a:path, '\\')
         return join(['/mnt', tolower(path_components[0][0:-2])] + l:path_components[1:-1], '/')
 endfunction
@@ -300,6 +307,14 @@ function! s:get_librewolf_manifest_dir_path() abort
                 return s:get_data_dir_path()
         end
         return s:build_path([$HOME, '.librewolf', 'native-messaging-hosts'])
+endfunction
+
+function! s:arc_config_exists() abort
+        let l:p = [$HOME, '.config', 'Arc']
+        if has('mac')
+                let l:p = [$HOME, 'Library', 'Application Support', 'Arc']
+        end
+        return isdirectory(s:build_path(l:p))
 endfunction
 
 function! s:brave_config_exists() abort
@@ -583,12 +598,21 @@ function! s:get_executable_content(data_dir, prolog) abort
         let l:stdioopen = ''
         if api_info().version.major > 0 || api_info().version.minor > 6
                 let l:stdioopen = '--cmd "' .
+                                        \"let g:firenvim_config={'globalSettings':{},'localSettings':{'.*':{}}}|" .
                                         \'let g:firenvim_i=[]|' .
                                         \'let g:firenvim_o=[]|' .
                                         \'let g:Firenvim_oi={i,d,e->add(g:firenvim_i,d)}|' .
-                                        \'let g:Firenvim_oo={t->add(g:firenvim_o,t)}|' .
+                                        \'let g:Firenvim_oo={t->[chansend(2,t)]+add(g:firenvim_o,t)}|' .
                                         \"let g:firenvim_c=stdioopen({'on_stdin':{i,d,e->g:Firenvim_oi(i,d,e)},'on_print':{t->g:Firenvim_oo(t)}})".
                                         \'"'
+        endif
+        if s:is_wsl
+                " Get path of firenvim script on the linux side, execute that
+                " from the windows batch script
+                let s:is_wsl = v:false
+                let l:script_path = s:get_firenvim_script_path()
+                let s:is_wsl = v:true
+                return "@echo off\r\nwsl \"" . l:script_path . '"'
         endif
         if has('win32') || s:is_wsl
                 let l:wsl_prefix = ''
@@ -621,17 +645,22 @@ function! s:get_executable_content(data_dir, prolog) abort
                                 \ s:capture_env_var('XDG_CONFIG_DIRS') .
                                 \ s:capture_env_var('XDG_CACHE_HOME') .
                                 \ s:capture_env_var('XDG_RUNTIME_DIR') .
+                                \ s:capture_env_var('NVIM_APPNAME') .
                                 \ a:prolog . "\n" .
                                 \ "exec '" . s:get_progpath() .
                                   \ "' --headless " . l:stdioopen .
                                   \ " --cmd 'let g:started_by_firenvim = v:true' " .
                                   \ "-c 'try|" .
                                       \ 'call firenvim#run()|' .
+                                    \ 'catch /Unknown function/|' .
+                                      \ "call chansend(g:firenvim_c,[\"f\\n\\n\\n\"..json_encode({\"messages\":[\"Your plugin manager did not load the Firenvim plugin for neovim.\"],\"version\":\"0.0.0\"})])|" .
+                                      \ "call chansend(2,[\"Firenvim not in runtime path. &rtp=\"..&rtp])|" .
+                                      \ 'qall!|' .
                                     \ 'catch|' .
-                                      \ "call chansend(g:firenvim_c,[\"f\\n\\n\\n\"..json_encode({\"messages\":[\"Your plugin manager did not load the Firenvim plugin for neovim.\"]+g:firenvim_o,\"version\":\"0.0.0\"})])|" .
-                                      \ "call chansend(2,[\"Firenvim not in rtp:\"..&rtp])|" .
-                                      \ 'qall!' .
-                                  \ "|endtry'\n"
+                                      \ "call chansend(g:firenvim_c,[\"l\\n\\n\\n\"..json_encode({\"messages\": [\"Something went wrong when running firenvim. See troubleshooting guide.\"],\"version\":\"0.0.0\"})])|" .
+                                      \ 'call chansend(2,[v:exception])|' .
+                                      \ 'qall!|' .
+                                  \ "endtry'\n"
 endfunction
 
 function! s:get_manifest_beginning(execute_nvim_path) abort
@@ -673,6 +702,12 @@ endfunction
 function! s:get_browser_configuration() abort
         " Brave, Opera and Vivaldi all rely on Chrome's native messenger
         let l:browsers = {
+                \'arc': {
+                        \ 'has_config': s:arc_config_exists(),
+                        \ 'manifest_content': function('s:get_chrome_manifest'),
+                        \ 'manifest_dir_path': function('s:get_chrome_manifest_dir_path'),
+                        \ 'registry_key': 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\firenvim',
+                \},
                 \'brave': {
                         \ 'has_config': s:brave_config_exists(),
                         \ 'manifest_content': function('s:get_chrome_manifest'),
@@ -752,6 +787,10 @@ function! s:get_browser_configuration() abort
 
 endfunction
 
+function! s:get_firenvim_script_path() abort
+	return s:build_path([s:get_data_dir_path(), s:get_executable_name()])
+endfunction
+
 " At first, is_wsl is set to false, even on WSL. This lets us install firenvim
 " on the wsl side, in case people want to use a wsl browser.
 " Then, we set is_wsl to true if we're on wsl and launch firenvim#install
@@ -795,14 +834,10 @@ function! firenvim#install(...) abort
                 endif
         endif
 
-        " Decide where the script responsible for starting neovim should be
-        let l:data_dir = s:get_data_dir_path()
-        let l:execute_nvim_path = s:build_path([l:data_dir, s:get_executable_name()])
-
-        " Write said script to said path
+        let l:execute_nvim_path = s:get_firenvim_script_path()
         let l:execute_nvim = s:get_executable_content(s:get_runtime_dir_path(), l:script_prolog)
 
-        call s:maybe_execute('mkdir', l:data_dir, 'p', 0700)
+        call s:maybe_execute('mkdir', s:get_data_dir_path(), 'p', 0700)
         if s:is_wsl
                 let l:execute_nvim_path = s:to_wsl_path(l:execute_nvim_path)
         endif
@@ -888,6 +923,10 @@ function! firenvim#install(...) abort
                         echo 'Installation complete on the wsl side. Performing install on the windows side.'
                         call firenvim#install(l:force_install, l:script_prolog)
                 endif
+        endif
+
+        if luaeval('lvim~=nil')
+                echo 'WARNING: Lunarvim is not supported. Do not open issues if you use Lunarvim.'
         endif
 endfunction
 
