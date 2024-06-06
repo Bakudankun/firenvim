@@ -1,6 +1,16 @@
 # Troubleshooting Firenvim
 
-If you're having issues with Firenvim, here are the following steps you can take in order to check if everything is correctly set up on your side:
+If you're having issues with Firenvim, here are the steps you can take in order to check if everything is correctly set up on your side.
+
+## Make sure Flatpak and Snap are not preventing Firenvim from working
+
+If your browser is installed through Snap or Flatpak, sandboxing mechanisms might be preventing the browser from starting Neovim. You can confirm this by running:
+
+```
+flatpak permissions webextensions
+```
+
+If the output of this command shows that Snap/Flatpak are preventing Firenvim from running, you need to run `flatpak permission-set webextensions firenvim snap.firefox yes` to change that.
 
 ## Make sure the neovim plugin is installed
 
@@ -19,7 +29,7 @@ call firenvim#install(0)
 
 ## Make sure the firenvim script has been created
 
-Running `call firenvim#install(0)` should have created a shell or batch script in `$XDG_DATA_HOME/firenvim` (on linux/osx, this usually is `$HOME/.local/share/firenvim`, on windows it's `%APPDATA%\firenvim`). Make sure that the script exists and that it is executable. Try running it in a shell, like this:
+Running `call firenvim#install(0)` should have created a shell or batch script in `$XDG_DATA_HOME/firenvim` (on linux/osx, this usually is `$HOME/.local/share/firenvim`, on windows it's `%LOCALAPPDATA%\firenvim`). Make sure that the script exists and that it is executable. Try running it in a shell, like this:
 ```sh
 echo 'abcde{}' | ${XDG_DATA_HOME:-${HOME}/.local/share}/firenvim/firenvim
 ```
@@ -37,7 +47,7 @@ Running `call firenvim#install(0)` should also have created a file named `firenv
     * For Firefox: `$HOME/Library/Application Support/Mozilla/NativeMessagingHosts`
     * For Chrome: `$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts`
     * For Chromium: `$HOME/Library/Application Support/Chromium/NativeMessagingHosts`
-- On Windows: in `%APPDATA%\firenvim` and check that the following registry keys exist and point to the native manifest:
+- On Windows: in `%LOCALAPPDATA%\firenvim` and check that the following registry keys exist and point to the native manifest:
     * For Firefox: `HKEY_CURRENT_USER\SOFTWARE\Mozilla\NativeMessagingHosts\firenvim`
     * For Chrome/Chromium: `HKEY_CURRENT_USER\SOFTWARE\Google\Chrome\NativeMessagingHosts\firenvim`
 
@@ -60,7 +70,7 @@ In your browser, open the background console. This requires the following steps:
     * Click on the `background page` link.
     * If the console already contains messages, empty by pressing `<C-l>`.
 
-Then, navigate to a page with a textarea (I really like `http://txti.es` for this). Open the content console (`<CS-I>` on both firefox and chrome/ium). If you're using firefox, also open and clear the Browser Console (`<CS-J>`). Then, click on the textarea. This should result in messages being printed in the console. If it doesn't, try clicking on the Firenvim icon next to the urlbar. If no messages are logged there either, try clicking on the `Reload settings` button.
+Then, navigate to a page with a textarea. Open the content console (`<CS-I>` on both firefox and chrome/ium). If you're using firefox, also open and clear the Browser Console (`<CS-J>`). Then, click on the textarea. This should result in messages being printed in the console. If it doesn't, try clicking on the Firenvim icon next to the urlbar. If no messages are logged there either, try clicking on the `Reload settings` button.
 
 ### Make sure firenvim can access your config files
 

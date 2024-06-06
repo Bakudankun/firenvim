@@ -50,6 +50,35 @@ function! firenvim#hide_frame() abort
         call rpcnotify(firenvim#get_chan(), 'firenvim_hide_frame')
 endfunction
 
+" Asks the browser extension to write to the text area. Either two or no
+" arguments.
+" 1st arg: list of strings to write, one string per line, empty strings for
+"          empty lines
+" 2nd arg: position of the cursor
+function! firenvim#write(...) abort
+        let l:text = ''
+        let l:cursor = [0, 0]
+        if a:0 == 0
+                let l:text = nvim_buf_get_lines(0, 0, -1, 0)
+                let l:cursor = nvim_win_get_cursor(0)
+        elseif a:0 == 2
+                let l:text = a:1
+                let l:cursor = a:2
+                if type(l:text) != v:t_list || (len(l:text) > 0 && type(l:text[0]) != v:t_string)
+                        throw "firenvim#write's first argument must be a list of strings"
+                endif
+                if type(l:text) != v:t_list
+                        \ || len(l:cursor) != 2
+                        \ || type(l:cursor[0]) != v:t_number
+                        \ || type(l:cursor[1]) != v:t_number
+                        throw "firenvim#write's second argument must be a list of two numbers"
+                endif
+        else
+                throw 'firenvim#write should be called either with 0 or 2 arguments'
+        endif
+        call rpcnotify(firenvim#get_chan(), 'firenvim_bufwrite', {'text': l:text, 'cursor': l:cursor})
+endfunction
+
 " Asks the browser extension to send one or multiple key events to the
 " underlying input field.
 function! firenvim#press_keys(...) abort
@@ -201,7 +230,18 @@ function! firenvim#run() abort
                         let l:result['port'] = l:port
                 endif
 
-                call WriteStdout(a:id, json_encode(result))
+                let l:response = ''
+                try
+                        let l:response = json_encode(result)
+                catch /E474/
+                        call remove(result, 'settings')
+                        if !has_key(result, 'messages')
+                                let result['messages'] = []
+                        endif
+                        call add(result['messages'], 'Error serializing settings:' . v:exception)
+                        let l:response = json_encode(result)
+                endtry
+                call WriteStdout(a:id, l:response)
         endfunction
         if exists('g:firenvim_c')
                 for data in g:firenvim_i
@@ -887,7 +927,7 @@ function! firenvim#install(...) abort
                         call s:maybe_execute('writefile', split(l:ps1_content, "\n"), l:ps1_path)
                         call s:maybe_execute('setfperm', l:ps1_path, 'rwx------')
                         try
-                                let o = s:maybe_execute('system', ['powershell.exe', '-Command', '-'], readfile(l:ps1_path))
+                                let o = s:maybe_execute('system', ['powershell.exe', '-NonInteractive', '-Command', '-'], readfile(l:ps1_path))
                         catch /powershell.exe' is not executable/
                                 let l:failure = v:true
                                 let l:msg = 'Error: Firenvim could not find powershell.exe'
@@ -918,7 +958,7 @@ function! firenvim#install(...) abort
         endfor
 
         if !s:is_wsl
-                let s:is_wsl = !empty($WSLENV) || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
+                let s:is_wsl = has('wsl') || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
                 if s:is_wsl
                         echo 'Installation complete on the wsl side. Performing install on the windows side.'
                         call firenvim#install(l:force_install, l:script_prolog)
@@ -931,6 +971,12 @@ function! firenvim#install(...) abort
 endfunction
 
 " Removes files created by Firenvim during its installation process
+
+" The uninstallation logic is similar to `firenvim#install`:
+" > At first, is_wsl is set to false, even on WSL. This lets us uninstall
+" firenvim on the wsl side.
+" > Then, we set is_wsl to true if we're on wsl and launch
+" firenvim#uninstall again, uninstalling things on the host side.
 function! firenvim#uninstall() abort
 
         let l:data_dir = s:get_data_dir_path()
@@ -955,7 +1001,7 @@ function! firenvim#uninstall() abort
                 if has('win32') || s:is_wsl
                         echo 'Removing registry key for ' . l:name . '. This may take a while.'
                         let l:ps1_content = 'Remove-Item -Path "' . l:cur_browser['registry_key'] . '" -Recurse'
-                        let o = system(['powershell.exe', '-Command', '-'], [l:ps1_content])
+                        let o = system(['powershell.exe', '-NonInteractive', '-Command', '-'], [l:ps1_content])
                         if v:shell_error
                           echo o
                         endif
@@ -965,6 +1011,14 @@ function! firenvim#uninstall() abort
                 call delete(l:manifest_path)
                 echo 'Removed native manifest for ' . l:name . '.'
         endfor
+
+        if !s:is_wsl
+                let s:is_wsl = has('wsl') || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
+                if s:is_wsl
+                        echo 'Uninstallation complete on the wsl side. Performing uninstall on the windows side.'
+                        call firenvim#uninstall()
+                endif
+        endif
 endfunction
 
 function! firenvim#onUIEnter(event) abort
