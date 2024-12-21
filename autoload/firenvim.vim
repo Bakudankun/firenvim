@@ -243,6 +243,8 @@ function! firenvim#run() abort
                 endtry
                 call WriteStdout(a:id, l:response)
         endfunction
+        " g:firenvim_c might not exist for firenvim installations dating back
+        " to 2021 and earlier.
         if exists('g:firenvim_c')
                 for data in g:firenvim_i
                         call OnStdin(g:firenvim_c, data, 'stdin')
@@ -433,6 +435,9 @@ function! s:edge_config_exists() abort
         let l:p = [$HOME, '.config', 'microsoft-edge']
         if has('mac')
                 let l:p = [$HOME, 'Library', 'Application Support', 'Microsoft', 'Edge']
+                if !isdirectory(s:build_path(l:p))
+                        let l:p = [$HOME, 'Library', 'Application Support', 'Microsoft Edge']
+                endif
         elseif has('win32')
                 let l:p = [$HOME, 'AppData', 'Local', 'Microsoft', 'Edge']
         elseif s:is_wsl
@@ -490,7 +495,11 @@ endfunction
 
 function! s:get_edge_manifest_dir_path() abort
         if has('mac')
-                return s:build_path([$HOME, 'Library', 'Application Support', 'Microsoft', 'Edge', 'NativeMessagingHosts'])
+                let l:p = [$HOME, 'Library', 'Application Support', 'Microsoft', 'Edge']
+                if !isdirectory(s:build_path(l:p))
+                        let l:p = [$HOME, 'Library', 'Application Support', 'Microsoft Edge']
+                endif
+                return s:build_path(l:p + ['NativeMessagingHosts'])
         elseif has('win32') || s:is_wsl
                 return s:get_data_dir_path()
         end
@@ -585,9 +594,13 @@ function! s:get_progpath() abort
         " break when neovim is updated. Try to detect these cases, work around
         " them if possible and warn the user.
         let l:specific_installs = {
-                \ 'homebrew': {
+                \ 'homebrew (in /usr/local)': {
                         \ 'pattern': '^/usr/local/Cellar/',
                         \ 'constant_paths': ['/usr/local/opt/nvim']
+                \ },
+                \ 'homebrew (in /opt/homebrew)': {
+                        \ 'pattern': '^/opt/homebrew/Cellar/',
+                        \ 'constant_paths': ['/opt/homebrew/nvim']
                 \ },
                 \ 'nix': {
                         \ 'pattern': '^/nix/store/',
@@ -634,6 +647,16 @@ function! s:capture_env_var(var) abort
               \"fi\n"
 endfunction
 
+function! s:capture_windows_env_var(var) abort
+        let l:value = eval('$' . a:var)
+        if l:value ==? ''
+                return ''
+        endif
+        return 'if NOT DEFINED ' . a:var . ' (' . "\r\n" .
+              \'  set "' . a:var . '=' . l:value . '"' . "\r\n" .
+              \")\r\n"
+endfunction
+
 function! s:get_executable_content(data_dir, prolog) abort
         let l:stdioopen = ''
         if api_info().version.major > 0 || api_info().version.minor > 6
@@ -663,6 +686,7 @@ function! s:get_executable_content(data_dir, prolog) abort
                 return  "@echo off\r\n" .
                                         \ "mkdir \"" . l:dir . "\" 2>nul\r\n" .
                                         \ "cd \"" . l:dir . "\"\r\n" .
+                                        \ s:capture_windows_env_var('NVIM_APPNAME') .
                                         \ a:prolog . "\r\n" .
                                         \ l:wsl_prefix . ' "' . s:get_progpath() . '" --headless ' . l:stdioopen . ' --cmd "let g:started_by_firenvim = v:true" -c "call firenvim#run()"' . "\r\n"
         endif
@@ -686,9 +710,13 @@ function! s:get_executable_content(data_dir, prolog) abort
                                 \ s:capture_env_var('XDG_CACHE_HOME') .
                                 \ s:capture_env_var('XDG_RUNTIME_DIR') .
                                 \ s:capture_env_var('NVIM_APPNAME') .
+                                \ "if command -v nvim >/dev/null 2>/dev/null; then\n" .
+                                \ "  FIRENVIM_NVIM_BINARY=nvim\n" .
+                                \ "else\n" .
+                                \ '  FIRENVIM_NVIM_BINARY=' . s:get_progpath() . "\n" .
+                                \ "fi\n" .
                                 \ a:prolog . "\n" .
-                                \ "exec '" . s:get_progpath() .
-                                  \ "' --headless " . l:stdioopen .
+                                \ 'exec "$FIRENVIM_NVIM_BINARY" --headless ' . l:stdioopen .
                                   \ " --cmd 'let g:started_by_firenvim = v:true' " .
                                   \ "-c 'try|" .
                                       \ 'call firenvim#run()|' .
@@ -874,6 +902,36 @@ function! firenvim#install(...) abort
                 endif
         endif
 
+        try
+                if !s:is_wsl
+                        call firenvim#internal_install(l:force_install, l:script_prolog)
+                        let s:is_wsl = has('wsl') || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
+                        if s:is_wsl
+                                echo 'Installation complete on the wsl side. Performing install on the windows side.'
+                                call firenvim#internal_install(l:force_install, l:script_prolog)
+                        endif
+                else
+                        throw 'firenvim#install is called, but s:is_wsl has not been reset. Please report this bug.'
+                endif
+        finally
+                let s:is_wsl = v:false
+        endtry
+
+        if luaeval('lvim~=nil')
+                echo 'WARNING: Lunarvim is not supported. Do not open issues if you use Lunarvim.'
+        endif
+endfunction
+
+function! firenvim#internal_install(...) abort
+        let l:force_install = 0
+        let l:script_prolog = ''
+        if a:0 > 0
+                let l:force_install = a:1
+                if a:0 > 1
+                        let l:script_prolog = a:2
+                endif
+        endif
+
         let l:execute_nvim_path = s:get_firenvim_script_path()
         let l:execute_nvim = s:get_executable_content(s:get_runtime_dir_path(), l:script_prolog)
 
@@ -926,8 +984,9 @@ function! firenvim#install(...) abort
                         echo 'Creating registry key for ' . l:name . '. This may take a while. Script: ' . l:ps1_path
                         call s:maybe_execute('writefile', split(l:ps1_content, "\n"), l:ps1_path)
                         call s:maybe_execute('setfperm', l:ps1_path, 'rwx------')
+                        let l:o = ''
                         try
-                                let o = s:maybe_execute('system', ['powershell.exe', '-NonInteractive', '-Command', '-'], readfile(l:ps1_path))
+                                let l:o = s:maybe_execute('system', ['powershell.exe', '-NonInteractive', '-Command', '-'], readfile(l:ps1_path))
                         catch /powershell.exe' is not executable/
                                 let l:failure = v:true
                                 let l:msg = 'Error: Firenvim could not find powershell.exe'
@@ -936,7 +995,7 @@ function! firenvim#install(...) abort
                                 if s:is_wsl
                                         let l:msg += ' from WSL'
                                         try
-                                                let o = s:maybe_execute('system', ['/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', '-Command', '-'], readfile(l:ps1_path))
+                                                let l:o = s:maybe_execute('system', ['/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', '-NonInteractive', '-Command', '-'], readfile(l:ps1_path))
                                                 let l:failure = v:false
                                         catch /powershell.exe' is not executable/
                                                 let l:failure = v:true
@@ -950,24 +1009,12 @@ function! firenvim#install(...) abort
                         endtry
 
                         if v:shell_error
-                          echo o
+                                echo l:o
                         endif
 
                         echo 'Created registry key for ' . l:name . '.'
                 endif
         endfor
-
-        if !s:is_wsl
-                let s:is_wsl = has('wsl') || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
-                if s:is_wsl
-                        echo 'Installation complete on the wsl side. Performing install on the windows side.'
-                        call firenvim#install(l:force_install, l:script_prolog)
-                endif
-        endif
-
-        if luaeval('lvim~=nil')
-                echo 'WARNING: Lunarvim is not supported. Do not open issues if you use Lunarvim.'
-        endif
 endfunction
 
 " Removes files created by Firenvim during its installation process
@@ -978,7 +1025,23 @@ endfunction
 " > Then, we set is_wsl to true if we're on wsl and launch
 " firenvim#uninstall again, uninstalling things on the host side.
 function! firenvim#uninstall() abort
+        try
+                if !s:is_wsl
+                        call firenvim#internal_uninstall()
+                        let s:is_wsl = has('wsl') || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
+                        if s:is_wsl
+                                echo 'Uninstallation complete on the wsl side. Performing uninstall on the windows side.'
+                                call firenvim#internal_uninstall()
+                        endif
+                else
+                        throw 'firenvim#uninstall is called, but s:is_wsl has not been reset. Please report this bug.'
+                endif
+        finally
+                let s:is_wsl = v:false
+        endtry
+endfunction
 
+function! firenvim#internal_uninstall() abort
         let l:data_dir = s:get_data_dir_path()
         call delete(l:data_dir, 'rf')
         echo 'Removed firenvim data directory.'
@@ -1001,9 +1064,28 @@ function! firenvim#uninstall() abort
                 if has('win32') || s:is_wsl
                         echo 'Removing registry key for ' . l:name . '. This may take a while.'
                         let l:ps1_content = 'Remove-Item -Path "' . l:cur_browser['registry_key'] . '" -Recurse'
-                        let o = system(['powershell.exe', '-NonInteractive', '-Command', '-'], [l:ps1_content])
+                        let l:o = ''
+                        try
+                                let l:o = s:maybe_execute('system', ['powershell.exe', '-NonInteractive', '-Command', '-'], [l:ps1_content])
+                        catch /powershell.exe' is not executable/
+                                let l:failure = v:true
+                                let l:msg = 'Error: Firenvim could not find powershell.exe'
+                                " If the failure happened on wsl, try to use
+                                " an absolute path
+                                if s:is_wsl
+                                        let l:msg += ' from WSL'
+                                        try
+                                                let l:o = s:maybe_execute('system', ['/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', '-NonInteractive', '-Command', '-'], [l:ps1_content])
+                                                let l:failure = v:false
+                                        catch /powershell.exe' is not executable/
+                                                let l:failure = v:true
+                                        endtry
+                                endif
+                                let l:msg += ' on your system. Please report this issue.'
+                        endtry
+
                         if v:shell_error
-                          echo o
+                                echo l:o
                         endif
                         echo 'Removed registry key for ' . l:name . '.'
                 endif
@@ -1011,14 +1093,6 @@ function! firenvim#uninstall() abort
                 call delete(l:manifest_path)
                 echo 'Removed native manifest for ' . l:name . '.'
         endfor
-
-        if !s:is_wsl
-                let s:is_wsl = has('wsl') || !empty($WSL_DISTRO_NAME) || !empty ($WSL_INTEROP)
-                if s:is_wsl
-                        echo 'Uninstallation complete on the wsl side. Performing uninstall on the windows side.'
-                        call firenvim#uninstall()
-                endif
-        endif
 endfunction
 
 function! firenvim#onUIEnter(event) abort

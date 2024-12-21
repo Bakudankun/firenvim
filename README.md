@@ -12,23 +12,14 @@ Just click on any textarea and it will be immediately replaced by an instance of
 
 ## Installing
 
-Before installing anything please read [SECURITY.md](SECURITY.md) and make sure you're okay with everything mentioned. In the event you think of a way to compromise Firenvim, please send me an email (you can find my address in my commits).
+Before installing anything please read [SECURITY.md](SECURITY.md) and make sure you're okay with everything mentioned. In the event you think of a way to compromise Firenvim, please send me an email (you can find my address on my website).
 
 1. Install Firenvim as a regular NeoVim plugin, then run the built-in post-install script.
 
     * [lazy](https://github.com/folke/lazy.nvim)
 
         ```lua
-        {
-            'glacambre/firenvim',
-
-            -- Lazy load firenvim
-            -- Explanation: https://github.com/folke/lazy.nvim/discussions/463#discussioncomment-4819297
-            lazy = not vim.g.started_by_firenvim,
-            build = function()
-                vim.fn["firenvim#install"](0)
-            end
-        }
+        { 'glacambre/firenvim', build = ":call firenvim#install(0)" }
 
     * [vim-plug](https://github.com/junegunn/vim-plug)
 
@@ -281,10 +272,10 @@ vim.api.nvim_create_autocmd({'TextChanged', 'TextChangedI'}, {
         vim.g.timer_started = true
         vim.fn.timer_start(10000, function()
             vim.g.timer_started = false
-            write
+            vim.cmd('silent write')
         end)
     end
-end})
+})
 ```
 
 ### Configuring message timeout
